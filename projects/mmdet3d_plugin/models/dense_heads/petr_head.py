@@ -27,17 +27,19 @@ from mmcv.cnn import xavier_init, constant_init, kaiming_init
 import math
 from mmdet.models.utils import NormedLinear
 def pos2posemb3d(pos, num_pos_feats=128, temperature=10000):
-    scale = 2 * math.pi
-    pos = pos * scale
-    dim_t = torch.arange(num_pos_feats, dtype=torch.float32, device=pos.device)
-    dim_t = temperature ** (2 * (dim_t // 2) / num_pos_feats)
-    pos_x = pos[..., 0, None] / dim_t
+    # pos:(900, 3)
+    scale = 2 * math.pi # 2pi
+    pos = pos * scale # (900, 3) 0~2pi之间
+    dim_t = torch.arange(num_pos_feats, dtype=torch.float32, device=pos.device) # (128,)
+    dim_t = temperature ** (2 * (dim_t // 2) / num_pos_feats) # (128,)
+    pos_x = pos[..., 0, None] / dim_t # (900, 128)
     pos_y = pos[..., 1, None] / dim_t
     pos_z = pos[..., 2, None] / dim_t
+    # (900, 64)-->(900, 2, 64)-->(900, 128)
     pos_x = torch.stack((pos_x[..., 0::2].sin(), pos_x[..., 1::2].cos()), dim=-1).flatten(-2)
     pos_y = torch.stack((pos_y[..., 0::2].sin(), pos_y[..., 1::2].cos()), dim=-1).flatten(-2)
     pos_z = torch.stack((pos_z[..., 0::2].sin(), pos_z[..., 1::2].cos()), dim=-1).flatten(-2)
-    posemb = torch.cat((pos_y, pos_x, pos_z), dim=-1)
+    posemb = torch.cat((pos_y, pos_x, pos_z), dim=-1) # (900, 384)
     return posemb
 
 @HEADS.register_module()
@@ -116,15 +118,15 @@ class PETRHead(AnchorFreeHead):
         if 'code_size' in kwargs:
             self.code_size = kwargs['code_size']
         else:
-            self.code_size = 10
+            self.code_size = 10 # 初始化code size 10
         if code_weights is not None:
             self.code_weights = code_weights
         else:
-            self.code_weights = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.2, 0.2]
+            self.code_weights = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.2, 0.2] # 初始化code weight
         self.code_weights = self.code_weights[:self.code_size]
-        self.bg_cls_weight = 0
-        self.sync_cls_avg_factor = sync_cls_avg_factor
-        class_weight = loss_cls.get('class_weight', None)
+        self.bg_cls_weight = 0 # 0
+        self.sync_cls_avg_factor = sync_cls_avg_factor # False
+        class_weight = loss_cls.get('class_weight', None) # 1.0
         if class_weight is not None and (self.__class__ is PETRHead):
             assert isinstance(class_weight, float), 'Expected ' \
                 'class_weight to have type float. Found ' \
@@ -135,18 +137,18 @@ class PETRHead(AnchorFreeHead):
             assert isinstance(bg_cls_weight, float), 'Expected ' \
                 'bg_cls_weight to have type float. Found ' \
                 f'{type(bg_cls_weight)}.'
-            class_weight = torch.ones(num_classes + 1) * class_weight
+            class_weight = torch.ones(num_classes + 1) * class_weight # (11,) 全1初始化
             # set background class as the last indice
             class_weight[num_classes] = bg_cls_weight
             loss_cls.update({'class_weight': class_weight})
             if 'bg_cls_weight' in loss_cls:
                 loss_cls.pop('bg_cls_weight')
-            self.bg_cls_weight = bg_cls_weight
+            self.bg_cls_weight = bg_cls_weight # 0
 
         if train_cfg:
             assert 'assigner' in train_cfg, 'assigner should be provided '\
                 'when train_cfg is set.'
-            assigner = train_cfg['assigner']
+            assigner = train_cfg['assigner'] # HungarianAssigner3D
             assert loss_cls['loss_weight'] == assigner['cls_cost']['weight'], \
                 'The classification weight for loss and matcher should be' \
                 'exactly the same.'
@@ -156,45 +158,45 @@ class PETRHead(AnchorFreeHead):
             # assert loss_iou['loss_weight'] == assigner['iou_cost']['weight'], \
             #     'The regression iou weight for loss and matcher should be' \
             #     'exactly the same.'
-            self.assigner = build_assigner(assigner)
+            self.assigner = build_assigner(assigner) # HungarianAssigner3D
             # DETR sampling=False, so use PseudoSampler
-            sampler_cfg = dict(type='PseudoSampler')
+            sampler_cfg = dict(type='PseudoSampler') # 伪采样
             self.sampler = build_sampler(sampler_cfg, context=self)
 
-        self.num_query = num_query
-        self.num_classes = num_classes
-        self.in_channels = in_channels
-        self.num_reg_fcs = num_reg_fcs
+        self.num_query = num_query # 900
+        self.num_classes = num_classes # 10
+        self.in_channels = in_channels # 2048
+        self.num_reg_fcs = num_reg_fcs # 2
         self.train_cfg = train_cfg
         self.test_cfg = test_cfg
         self.fp16_enabled = False
-        self.embed_dims = 256
-        self.depth_step = depth_step
-        self.depth_num = depth_num
-        self.position_dim = 3 * self.depth_num
-        self.position_range = position_range
-        self.LID = LID
-        self.depth_start = depth_start
-        self.position_level = 0
-        self.with_position = with_position
-        self.with_multiview = with_multiview
+        self.embed_dims = 256 # 256
+        self.depth_step = depth_step # 0.8
+        self.depth_num = depth_num # 64
+        self.position_dim = 3 * self.depth_num # 192
+        self.position_range = position_range # [-61.2, -61.2, -10.0, 61.2, 61.2, 10.0]
+        self.LID = LID # True
+        self.depth_start = depth_start # 1
+        self.position_level = 0 # 0
+        self.with_position = with_position # True
+        self.with_multiview = with_multiview # True
         assert 'num_feats' in positional_encoding
-        num_feats = positional_encoding['num_feats']
+        num_feats = positional_encoding['num_feats'] # 128
         assert num_feats * 2 == self.embed_dims, 'embed_dims should' \
             f' be exactly 2 times of num_feats. Found {self.embed_dims}' \
             f' and {num_feats}.'
         self.act_cfg = transformer.get('act_cfg',
-                                       dict(type='ReLU', inplace=True))
-        self.num_pred = 6
-        self.normedlinear = normedlinear
+                                       dict(type='ReLU', inplace=True)) # Relu
+        self.num_pred = 6 # 6
+        self.normedlinear = normedlinear # False
         super(PETRHead, self).__init__(num_classes, in_channels, init_cfg = init_cfg)
 
-        self.loss_cls = build_loss(loss_cls)
-        self.loss_bbox = build_loss(loss_bbox)
-        self.loss_iou = build_loss(loss_iou)
+        self.loss_cls = build_loss(loss_cls) # FocalLoss
+        self.loss_bbox = build_loss(loss_bbox) # L1Loss
+        self.loss_iou = build_loss(loss_iou) # GIoULoss
 
         if self.loss_cls.use_sigmoid:
-            self.cls_out_channels = num_classes
+            self.cls_out_channels = num_classes # 10
         else:
             self.cls_out_channels = num_classes + 1
         # self.activate = build_activation_layer(self.act_cfg)
@@ -202,41 +204,42 @@ class PETRHead(AnchorFreeHead):
         #     self.positional_encoding = build_positional_encoding(
         #         positional_encoding)
         self.positional_encoding = build_positional_encoding(
-                positional_encoding)
-        self.transformer = build_transformer(transformer)
+                positional_encoding) # SinePositionalEncoding3D
+        self.transformer = build_transformer(transformer) # PETRTransformer
         self.code_weights = nn.Parameter(torch.tensor(
-            self.code_weights, requires_grad=False), requires_grad=False)
-        self.bbox_coder = build_bbox_coder(bbox_coder)
-        self.pc_range = self.bbox_coder.pc_range
+            self.code_weights, requires_grad=False), requires_grad=False) # 注册code weights为nn Parameter，并将requires_grad设置为False
+        self.bbox_coder = build_bbox_coder(bbox_coder) # NMSFreeCoder
+        self.pc_range = self.bbox_coder.pc_range # [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
         self._init_layers()
 
     def _init_layers(self):
         """Initialize layers of the transformer head."""
         if self.with_position:
             self.input_proj = Conv2d(
-                self.in_channels, self.embed_dims, kernel_size=1)
+                self.in_channels, self.embed_dims, kernel_size=1) # 2048-->256
         else:
             self.input_proj = Conv2d(
                 self.in_channels, self.embed_dims, kernel_size=1)
 
         cls_branch = []
         for _ in range(self.num_reg_fcs):
-            cls_branch.append(Linear(self.embed_dims, self.embed_dims))
+            cls_branch.append(Linear(self.embed_dims, self.embed_dims)) # 256-->256
             cls_branch.append(nn.LayerNorm(self.embed_dims))
             cls_branch.append(nn.ReLU(inplace=True))
         if self.normedlinear:
             cls_branch.append(NormedLinear(self.embed_dims, self.cls_out_channels))
         else:
-            cls_branch.append(Linear(self.embed_dims, self.cls_out_channels))
-        fc_cls = nn.Sequential(*cls_branch)
+            cls_branch.append(Linear(self.embed_dims, self.cls_out_channels)) # 256-->10
+        fc_cls = nn.Sequential(*cls_branch) # 256-->256-->10
 
         reg_branch = []
         for _ in range(self.num_reg_fcs):
-            reg_branch.append(Linear(self.embed_dims, self.embed_dims))
+            reg_branch.append(Linear(self.embed_dims, self.embed_dims)) # 256-->256
             reg_branch.append(nn.ReLU())
-        reg_branch.append(Linear(self.embed_dims, self.code_size))
-        reg_branch = nn.Sequential(*reg_branch)
+        reg_branch.append(Linear(self.embed_dims, self.code_size)) # 256-->10
+        reg_branch = nn.Sequential(*reg_branch) # 256-->256-->10
 
+        # 复制6次分类和回归分支
         self.cls_branches = nn.ModuleList(
             [fc_cls for _ in range(self.num_pred)])
         self.reg_branches = nn.ModuleList(
@@ -244,10 +247,10 @@ class PETRHead(AnchorFreeHead):
 
         if self.with_multiview:
             self.adapt_pos3d = nn.Sequential(
-                nn.Conv2d(self.embed_dims*3//2, self.embed_dims*4, kernel_size=1, stride=1, padding=0),
+                nn.Conv2d(self.embed_dims*3//2, self.embed_dims*4, kernel_size=1, stride=1, padding=0), # (384, 1024)
                 nn.ReLU(),
-                nn.Conv2d(self.embed_dims*4, self.embed_dims, kernel_size=1, stride=1, padding=0),
-            )
+                nn.Conv2d(self.embed_dims*4, self.embed_dims, kernel_size=1, stride=1, padding=0), # (1024, 256)
+            ) # 384-->1024-->256
         else:
             self.adapt_pos3d = nn.Sequential(
                 nn.Conv2d(self.embed_dims, self.embed_dims, kernel_size=1, stride=1, padding=0),
@@ -260,14 +263,14 @@ class PETRHead(AnchorFreeHead):
                 nn.Conv2d(self.position_dim, self.embed_dims*4, kernel_size=1, stride=1, padding=0),
                 nn.ReLU(),
                 nn.Conv2d(self.embed_dims*4, self.embed_dims, kernel_size=1, stride=1, padding=0),
-            )
+            ) # 192-->1024-->256
 
-        self.reference_points = nn.Embedding(self.num_query, 3)
+        self.reference_points = nn.Embedding(self.num_query, 3) # (900, 3)
         self.query_embedding = nn.Sequential(
-            nn.Linear(self.embed_dims*3//2, self.embed_dims),
+            nn.Linear(self.embed_dims*3//2, self.embed_dims), # 384-->256
             nn.ReLU(),
-            nn.Linear(self.embed_dims, self.embed_dims),
-        )
+            nn.Linear(self.embed_dims, self.embed_dims), # 256-->256
+        ) # 384-->256-->256
 
     def init_weights(self):
         """Initialize weights of the transformer head."""
@@ -281,49 +284,60 @@ class PETRHead(AnchorFreeHead):
 
     def position_embeding(self, img_feats, img_metas, masks=None):
         eps = 1e-5
-        pad_h, pad_w, _ = img_metas[0]['pad_shape'][0]
-        B, N, C, H, W = img_feats[self.position_level].shape
-        coords_h = torch.arange(H, device=img_feats[0].device).float() * pad_h / H
-        coords_w = torch.arange(W, device=img_feats[0].device).float() * pad_w / W
+        pad_h, pad_w, _ = img_metas[0]['pad_shape'][0] # (512, 1408, 3)
+        B, N, C, H, W = img_feats[self.position_level].shape # (1, 6, 2048, 16, 44)
+        coords_h = torch.arange(H, device=img_feats[0].device).float() * pad_h / H # (16,) 恢复到原图坐标
+        coords_w = torch.arange(W, device=img_feats[0].device).float() * pad_w / W # (44,)
 
         if self.LID:
+            # self.depth_num:64 --> 均匀产生64个点
             index  = torch.arange(start=0, end=self.depth_num, step=1, device=img_feats[0].device).float()
-            index_1 = index + 1
+            index_1 = index + 1 # 1~64-->(64,)
+            # (61.2 - 1) / (64 * 65) = 0.01447
             bin_size = (self.position_range[3] - self.depth_start) / (self.depth_num * (1 + self.depth_num))
-            coords_d = self.depth_start + bin_size * index * index_1
+            coords_d = self.depth_start + bin_size * index * index_1 # (64,) 真实深度(1到59.34)
         else:
             index  = torch.arange(start=0, end=self.depth_num, step=1, device=img_feats[0].device).float()
             bin_size = (self.position_range[3] - self.depth_start) / self.depth_num
-            coords_d = self.depth_start + bin_size * index
+            coords_d = self.depth_start + bin_size * index 
 
-        D = coords_d.shape[0]
+        D = coords_d.shape[0] # 64
+        # (44, 16, 64)-->(3, 44, 16, 64)-->(44, 16, 64, 3)
         coords = torch.stack(torch.meshgrid([coords_w, coords_h, coords_d])).permute(1, 2, 3, 0) # W, H, D, 3
-        coords = torch.cat((coords, torch.ones_like(coords[..., :1])), -1)
+        coords = torch.cat((coords, torch.ones_like(coords[..., :1])), -1) # (44, 16, 64, 4)
+        # 像素坐标乘深度
         coords[..., :2] = coords[..., :2] * torch.maximum(coords[..., 2:3], torch.ones_like(coords[..., 2:3])*eps)
 
         img2lidars = []
         for img_meta in img_metas:
             img2lidar = []
             for i in range(len(img_meta['lidar2img'])):
-                img2lidar.append(np.linalg.inv(img_meta['lidar2img'][i]))
+                img2lidar.append(np.linalg.inv(img_meta['lidar2img'][i])) # 求img2lidar
             img2lidars.append(np.asarray(img2lidar))
         img2lidars = np.asarray(img2lidars)
-        img2lidars = coords.new_tensor(img2lidars) # (B, N, 4, 4)
+        img2lidars = coords.new_tensor(img2lidars) # (B, N, 4, 4)-->(1, 6, 4, 4)
 
+        # (1, 1, 44, 16, 64, 4, 1)-->(1, 6, 44, 16, 64, 4, 1)
         coords = coords.view(1, 1, W, H, D, 4, 1).repeat(B, N, 1, 1, 1, 1, 1)
+        # (1, 6, 1, 1, 1, 4, 4)-->(1, 6, 44, 16, 64, 4, 4)
         img2lidars = img2lidars.view(B, N, 1, 1, 1, 4, 4).repeat(1, 1, W, H, D, 1, 1)
-        coords3d = torch.matmul(img2lidars, coords).squeeze(-1)[..., :3]
+        # (1, 6, 44, 16, 64, 4, 4) * (1, 6, 44, 16, 64, 4, 1)-->(1, 6, 44, 16, 64, 4, 1)-->(1, 6, 44, 16, 64, 4)-->(1, 6, 44, 16, 64, 3)
+        coords3d = torch.matmul(img2lidars, coords).squeeze(-1)[..., :3] # (1, 6, 44, 16, 64, 3)
+        # 计算伪点云归一化坐标 --> (1, 6, 44, 16, 64, 1)
         coords3d[..., 0:1] = (coords3d[..., 0:1] - self.position_range[0]) / (self.position_range[3] - self.position_range[0])
         coords3d[..., 1:2] = (coords3d[..., 1:2] - self.position_range[1]) / (self.position_range[4] - self.position_range[1])
         coords3d[..., 2:3] = (coords3d[..., 2:3] - self.position_range[2]) / (self.position_range[5] - self.position_range[2])
 
-        coords_mask = (coords3d > 1.0) | (coords3d < 0.0) 
-        coords_mask = coords_mask.flatten(-2).sum(-1) > (D * 0.5)
+        coords_mask = (coords3d > 1.0) | (coords3d < 0.0) # (1, 6, 44, 16, 64, 3)
+        # 单点的深度和要大于预定深度的一半
+        coords_mask = coords_mask.flatten(-2).sum(-1) > (D * 0.5) # (1, 6, 44, 16, 192)-->(1, 6, 44, 16)
+        # masks通过外部传入，表示图像坐标的有效点 (1, 6, 16, 44) | (1, 6, 16, 44) --> (1, 6, 16, 44)
         coords_mask = masks | coords_mask.permute(0, 1, 3, 2)
+        # (1, 6, 44, 16, 64, 3)-->(1, 6, 64, 3, 16, 44)-->(6, 192, 16, 44)
         coords3d = coords3d.permute(0, 1, 4, 5, 3, 2).contiguous().view(B*N, -1, H, W)
-        coords3d = inverse_sigmoid(coords3d)
-        coords_position_embeding = self.position_encoder(coords3d)
-        
+        coords3d = inverse_sigmoid(coords3d) # 逆向恢复3D点
+        coords_position_embeding = self.position_encoder(coords3d) # (6, 256, 16, 44)
+        # (1, 6, 256, 16, 44)和（1, 6, 16, 44）
         return coords_position_embeding.view(B, N, self.embed_dims, H, W), coords_mask
 
     def _load_from_state_dict(self, state_dict, prefix, local_metadata, strict,
@@ -371,28 +385,31 @@ class PETRHead(AnchorFreeHead):
                 Shape [nb_dec, bs, num_query, 9].
         """
         
-        x = mlvl_feats[0]
-        batch_size, num_cams = x.size(0), x.size(1)
-        input_img_h, input_img_w, _ = img_metas[0]['pad_shape'][0]
+        x = mlvl_feats[0] # (1, 6, 2048, 16, 44)
+        batch_size, num_cams = x.size(0), x.size(1) # 1, 6
+        input_img_h, input_img_w, _ = img_metas[0]['pad_shape'][0] # 512, 1408, 3
         masks = x.new_ones(
-            (batch_size, num_cams, input_img_h, input_img_w))
+            (batch_size, num_cams, input_img_h, input_img_w)) # (1, 6, 512, 1408)
+        # 逐帧处理，计算mask
         for img_id in range(batch_size):
             for cam_id in range(num_cams):
-                img_h, img_w, _ = img_metas[img_id]['img_shape'][cam_id]
+                img_h, img_w, _ = img_metas[img_id]['img_shape'][cam_id] # 512, 1408
                 masks[img_id, cam_id, :img_h, :img_w] = 0
-        x = self.input_proj(x.flatten(0,1))
-        x = x.view(batch_size, num_cams, *x.shape[-3:])
+        x = self.input_proj(x.flatten(0,1)) # (6, 2048, 16, 44) --> (6, 256, 16, 44)
+        x = x.view(batch_size, num_cams, *x.shape[-3:]) # (1, 6, 256, 16, 44)
         # interpolate masks to have the same spatial shape with x
         masks = F.interpolate(
-            masks, size=x.shape[-2:]).to(torch.bool)
+            masks, size=x.shape[-2:]).to(torch.bool) # (1, 6, 512, 1408)-->(1, 6, 16, 44)
 
         if self.with_position:
+            # (1, 6, 256, 16, 44)和(1, 6, 16, 44）为特征图上的每一个点学了一个感知位置的几何编码
             coords_position_embeding, _ = self.position_embeding(mlvl_feats, img_metas, masks)
-            pos_embed = coords_position_embeding
+            pos_embed = coords_position_embeding # (1, 6, 256, 16, 44)
             if self.with_multiview:
-                sin_embed = self.positional_encoding(masks)
+                sin_embed = self.positional_encoding(masks) # (1, 6, 384, 16, 44)
+                # (6, 384, 16, 44)-->(6, 256, 16, 44)-->(1, 6, 256, 16, 44)
                 sin_embed = self.adapt_pos3d(sin_embed.flatten(0, 1)).view(x.size())
-                pos_embed = pos_embed + sin_embed
+                pos_embed = pos_embed + sin_embed # (1, 6, 256, 16, 44)
             else:
                 pos_embeds = []
                 for i in range(num_cams):
@@ -412,39 +429,51 @@ class PETRHead(AnchorFreeHead):
                     pos_embeds.append(pos_embed.unsqueeze(1))
                 pos_embed = torch.cat(pos_embeds, 1)
 
-        reference_points = self.reference_points.weight
+        reference_points = self.reference_points.weight # (900, 3) nn.Embedding可学习
+        # (900, 3)-->(900, 384)-->(900, 256) Linear学习
         query_embeds = self.query_embedding(pos2posemb3d(reference_points))
+        # (900, 3)-->(1, 900, 3)-->(1, 900, 3)
         reference_points = reference_points.unsqueeze(0).repeat(batch_size, 1, 1) #.sigmoid()
 
+        # 进入transformer
+        # x: (1, 12, 256, 20, 50) 图像特征
+        # masks:(1, 12, 20, 50) 有效图像的mask
+        # query_embeds:(900, 256) 900个根据reference_points生成的query的位置编码
+        # pos_embed:(1, 6, 256, 16, 44) 图像几何位置嵌入(具有感知3维空间位置的作用)
+        # self.reg_branches: 回归分支
         outs_dec, _ = self.transformer(x, masks, query_embeds, pos_embed, self.reg_branches)
-        outs_dec = torch.nan_to_num(outs_dec)
+        outs_dec = torch.nan_to_num(outs_dec) # (6, 1, 900, 256)
         outputs_classes = []
         outputs_coords = []
+        # 逐层处理
         for lvl in range(outs_dec.shape[0]):
-            reference = inverse_sigmoid(reference_points.clone())
+            # 取出初始参考点，恢复实际坐标(1, 900, 3) 每层的参考点都相同？迭代优化体现在query的不同？
+            reference = inverse_sigmoid(reference_points.clone()) 
             assert reference.shape[-1] == 3
-            outputs_class = self.cls_branches[lvl](outs_dec[lvl])
-            tmp = self.reg_branches[lvl](outs_dec[lvl])
-
+            # 每层的query不同，因此产生的分类和回归也不同 
+            outputs_class = self.cls_branches[lvl](outs_dec[lvl]) # (1, 900, 10)
+            tmp = self.reg_branches[lvl](outs_dec[lvl]) # (1, 900, 10)
+            # 实际参考点+偏移量
             tmp[..., 0:2] += reference[..., 0:2]
-            tmp[..., 0:2] = tmp[..., 0:2].sigmoid()
+            tmp[..., 0:2] = tmp[..., 0:2].sigmoid() # 取sigmoid变到0～1之间
             tmp[..., 4:5] += reference[..., 2:3]
             tmp[..., 4:5] = tmp[..., 4:5].sigmoid()
 
             outputs_coord = tmp
-            outputs_classes.append(outputs_class)
-            outputs_coords.append(outputs_coord)
+            outputs_classes.append(outputs_class) # 将分类预测加入outputs list (1, 900, 10)
+            outputs_coords.append(outputs_coord) # 将回归预测加入outputs list (1, 900, 10)
 
-        all_cls_scores = torch.stack(outputs_classes)
-        all_bbox_preds = torch.stack(outputs_coords)
+        all_cls_scores = torch.stack(outputs_classes) # (6, 1, 900, 10)
+        all_bbox_preds = torch.stack(outputs_coords) # (6, 1, 900, 10)
 
+        # 恢复到原始lidar系下
         all_bbox_preds[..., 0:1] = (all_bbox_preds[..., 0:1] * (self.pc_range[3] - self.pc_range[0]) + self.pc_range[0])
         all_bbox_preds[..., 1:2] = (all_bbox_preds[..., 1:2] * (self.pc_range[4] - self.pc_range[1]) + self.pc_range[1])
         all_bbox_preds[..., 4:5] = (all_bbox_preds[..., 4:5] * (self.pc_range[5] - self.pc_range[2]) + self.pc_range[2])
 
         outs = {
-            'all_cls_scores': all_cls_scores,
-            'all_bbox_preds': all_bbox_preds,
+            'all_cls_scores': all_cls_scores, # (6, 1, 900, 10)
+            'all_bbox_preds': all_bbox_preds, # (6, 1, 900, 10)
             'enc_cls_scores': None,
             'enc_bbox_preds': None, 
         }
@@ -480,30 +509,31 @@ class PETRHead(AnchorFreeHead):
                 - neg_inds (Tensor): Sampled negative indices for each image.
         """
 
-        num_bboxes = bbox_pred.size(0)
+        num_bboxes = bbox_pred.size(0) # 900
         # assigner and sampler
         assign_result = self.assigner.assign(bbox_pred, cls_score, gt_bboxes,
                                              gt_labels, gt_bboxes_ignore)
         sampling_result = self.sampler.sample(assign_result, bbox_pred,
                                               gt_bboxes)
-        pos_inds = sampling_result.pos_inds
-        neg_inds = sampling_result.neg_inds
+        pos_inds = sampling_result.pos_inds # 预测框为正例(匹配到gt)的索引
+        neg_inds = sampling_result.neg_inds # 预测框为负例的索引
 
         # label targets
         labels = gt_bboxes.new_full((num_bboxes, ),
                                     self.num_classes,
-                                    dtype=torch.long)
-        labels[pos_inds] = gt_labels[sampling_result.pos_assigned_gt_inds]
-        label_weights = gt_bboxes.new_ones(num_bboxes)
+                                    dtype=torch.long) # (900,) 全10初始化
+        labels[pos_inds] = gt_labels[sampling_result.pos_assigned_gt_inds] # 为正例分配label
+        label_weights = gt_bboxes.new_ones(num_bboxes) # 全1初始化
 
         # bbox targets
-        code_size = gt_bboxes.size(1)
-        bbox_targets = torch.zeros_like(bbox_pred)[..., :code_size]
-        bbox_weights = torch.zeros_like(bbox_pred)
-        bbox_weights[pos_inds] = 1.0
+        code_size = gt_bboxes.size(1) # 10
+        bbox_targets = torch.zeros_like(bbox_pred)[..., :code_size] # (900, 10) 全0初始化
+        bbox_weights = torch.zeros_like(bbox_pred) # (900, 10)
+        bbox_weights[pos_inds] = 1.0 # 只计算正例的回归损失
         # print(gt_bboxes.size(), bbox_pred.size())
         # DETR
-        bbox_targets[pos_inds] = sampling_result.pos_gt_bboxes
+        bbox_targets[pos_inds] = sampling_result.pos_gt_bboxes # 将正例预测的正例bbox赋值到bbox_targets eg:(45, 9)
+        # (900,) (900, ) (900, 10) (900, 10) 
         return (labels, label_weights, bbox_targets, bbox_weights, 
                 pos_inds, neg_inds)
 
@@ -545,6 +575,7 @@ class PETRHead(AnchorFreeHead):
         assert gt_bboxes_ignore_list is None, \
             'Only supports for gt_bboxes_ignore setting to None.'
         num_imgs = len(cls_scores_list)
+        # 逐帧处理
         gt_bboxes_ignore_list = [
             gt_bboxes_ignore_list for _ in range(num_imgs)
         ]
@@ -553,8 +584,8 @@ class PETRHead(AnchorFreeHead):
          bbox_weights_list, pos_inds_list, neg_inds_list) = multi_apply(
              self._get_target_single, cls_scores_list, bbox_preds_list,
              gt_labels_list, gt_bboxes_list, gt_bboxes_ignore_list)
-        num_total_pos = sum((inds.numel() for inds in pos_inds_list))
-        num_total_neg = sum((inds.numel() for inds in neg_inds_list))
+        num_total_pos = sum((inds.numel() for inds in pos_inds_list)) # 正例数量 eg:45
+        num_total_neg = sum((inds.numel() for inds in neg_inds_list)) # 负例数量 eg:855
         return (labels_list, label_weights_list, bbox_targets_list,
                 bbox_weights_list, num_total_pos, num_total_neg)
 
@@ -582,48 +613,53 @@ class PETRHead(AnchorFreeHead):
             dict[str, Tensor]: A dictionary of loss components for outputs from
                 a single decoder layer.
         """
-        num_imgs = cls_scores.size(0)
-        cls_scores_list = [cls_scores[i] for i in range(num_imgs)]
-        bbox_preds_list = [bbox_preds[i] for i in range(num_imgs)]
+        num_imgs = cls_scores.size(0) # 1
+        cls_scores_list = [cls_scores[i] for i in range(num_imgs)] # (900, 10)
+        bbox_preds_list = [bbox_preds[i] for i in range(num_imgs)] # (900, 10)
+        # 1.按照batch处理,计算分类和回归的targets
         cls_reg_targets = self.get_targets(cls_scores_list, bbox_preds_list,
                                            gt_bboxes_list, gt_labels_list, 
                                            gt_bboxes_ignore_list)
         (labels_list, label_weights_list, bbox_targets_list, bbox_weights_list,
          num_total_pos, num_total_neg) = cls_reg_targets
-        labels = torch.cat(labels_list, 0)
-        label_weights = torch.cat(label_weights_list, 0)
-        bbox_targets = torch.cat(bbox_targets_list, 0)
-        bbox_weights = torch.cat(bbox_weights_list, 0)
+        # 在batch维度进行拼接
+        labels = torch.cat(labels_list, 0) # (900,)
+        label_weights = torch.cat(label_weights_list, 0) # (900,)
+        bbox_targets = torch.cat(bbox_targets_list, 0) # (900, 9)
+        bbox_weights = torch.cat(bbox_weights_list, 0) # (900, 10)
 
-        # classification loss
-        cls_scores = cls_scores.reshape(-1, self.cls_out_channels)
+        # 2.计算该层的分类和回归损失
+        # 2.1 classification loss
+        cls_scores = cls_scores.reshape(-1, self.cls_out_channels) # (900, 10)
         # construct weighted avg_factor to match with the official DETR repo
         cls_avg_factor = num_total_pos * 1.0 + \
-            num_total_neg * self.bg_cls_weight
+            num_total_neg * self.bg_cls_weight # eg:45
         if self.sync_cls_avg_factor:
             cls_avg_factor = reduce_mean(
-                cls_scores.new_tensor([cls_avg_factor]))
+                cls_scores.new_tensor([cls_avg_factor])) # 45
 
         cls_avg_factor = max(cls_avg_factor, 1)
+        # 计算分类损失
         loss_cls = self.loss_cls(
             cls_scores, labels, label_weights, avg_factor=cls_avg_factor)
 
         # Compute the average number of gt boxes accross all gpus, for
         # normalization purposes
-        num_total_pos = loss_cls.new_tensor([num_total_pos])
-        num_total_pos = torch.clamp(reduce_mean(num_total_pos), min=1).item()
+        num_total_pos = loss_cls.new_tensor([num_total_pos]) # 45
+        num_total_pos = torch.clamp(reduce_mean(num_total_pos), min=1).item() # 45
 
         # regression L1 loss
-        bbox_preds = bbox_preds.reshape(-1, bbox_preds.size(-1))
-        normalized_bbox_targets = normalize_bbox(bbox_targets, self.pc_range)
-        isnotnan = torch.isfinite(normalized_bbox_targets).all(dim=-1)
-        bbox_weights = bbox_weights * self.code_weights
+        bbox_preds = bbox_preds.reshape(-1, bbox_preds.size(-1)) # (900, 10)
+        normalized_bbox_targets = normalize_bbox(bbox_targets, self.pc_range) # (900, 10) 将target box编码成10维
+        isnotnan = torch.isfinite(normalized_bbox_targets).all(dim=-1) # (900,) 将非target bbox过滤掉
+        bbox_weights = bbox_weights * self.code_weights # (900, 10)
 
+        # 计算回归损失 只计算匹配上gt的预测框损失
         loss_bbox = self.loss_bbox(
                 bbox_preds[isnotnan, :10], normalized_bbox_targets[isnotnan, :10], bbox_weights[isnotnan, :10], avg_factor=num_total_pos)
 
-        loss_cls = torch.nan_to_num(loss_cls)
-        loss_bbox = torch.nan_to_num(loss_bbox)
+        loss_cls = torch.nan_to_num(loss_cls) # 将nan替换为0 (1,) eg:2.4100
+        loss_bbox = torch.nan_to_num(loss_bbox) # eg:1.7717
         return loss_cls, loss_bbox
     
     @force_fp32(apply_to=('preds_dicts'))
@@ -662,27 +698,28 @@ class PETRHead(AnchorFreeHead):
             f'{self.__class__.__name__} only supports ' \
             f'for gt_bboxes_ignore setting to None.'
 
-        all_cls_scores = preds_dicts['all_cls_scores']
-        all_bbox_preds = preds_dicts['all_bbox_preds']
-        enc_cls_scores = preds_dicts['enc_cls_scores']
-        enc_bbox_preds = preds_dicts['enc_bbox_preds']
+        all_cls_scores = preds_dicts['all_cls_scores'] # (6, 1, 900, 10)
+        all_bbox_preds = preds_dicts['all_bbox_preds'] # (6, 1, 900, 10)
+        enc_cls_scores = preds_dicts['enc_cls_scores'] # None
+        enc_bbox_preds = preds_dicts['enc_bbox_preds'] # None
 
-        num_dec_layers = len(all_cls_scores)
+        num_dec_layers = len(all_cls_scores) # 6
         device = gt_labels_list[0].device
         gt_bboxes_list = [torch.cat(
             (gt_bboxes.gravity_center, gt_bboxes.tensor[:, 3:]),
-            dim=1).to(device) for gt_bboxes in gt_bboxes_list]
+            dim=1).to(device) for gt_bboxes in gt_bboxes_list] # (45, 9)
 
-        all_gt_bboxes_list = [gt_bboxes_list for _ in range(num_dec_layers)]
+        all_gt_bboxes_list = [gt_bboxes_list for _ in range(num_dec_layers)] # 复制6份
         all_gt_labels_list = [gt_labels_list for _ in range(num_dec_layers)]
         all_gt_bboxes_ignore_list = [
             gt_bboxes_ignore for _ in range(num_dec_layers)
-        ]
+        ] # None
 
+        # 逐层计算loss
         losses_cls, losses_bbox = multi_apply(
             self.loss_single, all_cls_scores, all_bbox_preds,
             all_gt_bboxes_list, all_gt_labels_list, 
-            all_gt_bboxes_ignore_list)
+            all_gt_bboxes_ignore_list) # 6层的分类和回归损失 List[Tensor:6]
 
         loss_dict = dict()
         # loss of proposal generated from encode feature map.
@@ -697,14 +734,14 @@ class PETRHead(AnchorFreeHead):
             loss_dict['enc_loss_cls'] = enc_loss_cls
             loss_dict['enc_loss_bbox'] = enc_losses_bbox
 
-        # loss from the last decoder layer
+        # loss from the last decoder layer 记录最后一层的损失
         loss_dict['loss_cls'] = losses_cls[-1]
         loss_dict['loss_bbox'] = losses_bbox[-1]
 
-        # loss from other decoder layers
+        # loss from other decoder layers 记录其他层的损失
         num_dec_layer = 0
         for loss_cls_i, loss_bbox_i in zip(losses_cls[:-1],
-                                           losses_bbox[:-1]):
+                                           losses_bbox[:-1]): # d0~d4
             loss_dict[f'd{num_dec_layer}.loss_cls'] = loss_cls_i
             loss_dict[f'd{num_dec_layer}.loss_bbox'] = loss_bbox_i
             num_dec_layer += 1
@@ -720,15 +757,15 @@ class PETRHead(AnchorFreeHead):
             list[dict]: Decoded bbox, scores and labels after nms.
         """
         preds_dicts = self.bbox_coder.decode(preds_dicts)
-        num_samples = len(preds_dicts)
+        num_samples = len(preds_dicts) # 1
 
         ret_list = []
         for i in range(num_samples):
             preds = preds_dicts[i]
-            bboxes = preds['bboxes']
+            bboxes = preds['bboxes'] # (300, 9)
             bboxes[:, 2] = bboxes[:, 2] - bboxes[:, 5] * 0.5
             bboxes = img_metas[i]['box_type_3d'](bboxes, bboxes.size(-1))
-            scores = preds['scores']
-            labels = preds['labels']
+            scores = preds['scores'] # (300,)
+            labels = preds['labels'] # (300,)
             ret_list.append([bboxes, scores, labels])
         return ret_list

@@ -48,12 +48,12 @@ class SinePositionalEncoding3D(BaseModule):
             assert isinstance(scale, (float, int)), 'when normalize is set,' \
                 'scale should be provided and in float or int type, ' \
                 f'found {type(scale)}'
-        self.num_feats = num_feats
-        self.temperature = temperature
-        self.normalize = normalize
-        self.scale = scale
-        self.eps = eps
-        self.offset = offset
+        self.num_feats = num_feats # 128
+        self.temperature = temperature # 10000
+        self.normalize = normalize # True
+        self.scale = scale # 2pi
+        self.eps = eps # 1e-06
+        self.offset = offset # 0.0
 
     def forward(self, mask):
         """Forward function for `SinePositionalEncoding`.
@@ -67,28 +67,30 @@ class SinePositionalEncoding3D(BaseModule):
         """
         # For convenience of exporting to ONNX, it's required to convert
         # `masks` from bool to int.
-        mask = mask.to(torch.int)
+        mask = mask.to(torch.int) # (1, 6, 16, 44)
         not_mask = 1 - mask  # logical_not
-        n_embed = not_mask.cumsum(1, dtype=torch.float32)
-        y_embed = not_mask.cumsum(2, dtype=torch.float32)
-        x_embed = not_mask.cumsum(3, dtype=torch.float32)
+        n_embed = not_mask.cumsum(1, dtype=torch.float32) # (1, 6, 16, 44) 相机信息 沿着高度累加
+        y_embed = not_mask.cumsum(2, dtype=torch.float32) # (1, 6, 16, 44)
+        x_embed = not_mask.cumsum(3, dtype=torch.float32) # (1, 6, 16, 44)
         if self.normalize:
+            # (点值 + 偏移量) / (最大值 + eps) * 2pi
             n_embed = (n_embed + self.offset) / \
                       (n_embed[:, -1:, :, :] + self.eps) * self.scale
             y_embed = (y_embed + self.offset) / \
                       (y_embed[:, :, -1:, :] + self.eps) * self.scale
             x_embed = (x_embed + self.offset) / \
-                      (x_embed[:, :, :, -1:] + self.eps) * self.scale
+                      (x_embed[:, :, :, -1:] + self.eps) * self.scale # 归一化在0-2pi之间
         dim_t = torch.arange(
-            self.num_feats, dtype=torch.float32, device=mask.device)
-        dim_t = self.temperature**(2 * (dim_t // 2) / self.num_feats)
-        pos_n = n_embed[:, :, :, :, None] / dim_t
+            self.num_feats, dtype=torch.float32, device=mask.device) # (128,)
+        dim_t = self.temperature**(2 * (dim_t // 2) / self.num_feats) # 10000 ** (2i/d_model)
+        pos_n = n_embed[:, :, :, :, None] / dim_t # (1, 6, 16, 44, 1) --> (1, 6, 16, 44, 128)
         pos_x = x_embed[:, :, :, :, None] / dim_t
         pos_y = y_embed[:, :, :, :, None] / dim_t
         # use `view` instead of `flatten` for dynamically exporting to ONNX
-        B, N, H, W = mask.size()
+        B, N, H, W = mask.size() # (1, 6, 16, 44)
+        # (1, 6, 16, 44, 64)-->(1, 6, 16, 44, 2, 64)-->(1, 6, 16, 44, 128)
         pos_n = torch.stack(
-            (pos_n[:, :, :, :, 0::2].sin(), pos_n[:, :, :, :, 1::2].cos()),
+            (pos_n[:, :, :, :, 0::2].sin(), pos_n[:, :, :, :, 1::2].cos()), # 偶数sin，奇数cos
             dim=4).view(B, N, H, W, -1)
         pos_x = torch.stack(
             (pos_x[:, :, :, :, 0::2].sin(), pos_x[:, :, :, :, 1::2].cos()),
@@ -96,6 +98,7 @@ class SinePositionalEncoding3D(BaseModule):
         pos_y = torch.stack(
             (pos_y[:, :, :, :, 0::2].sin(), pos_y[:, :, :, :, 1::2].cos()),
             dim=4).view(B, N, H, W, -1)
+        # (1, 6, 16, 44, 384)-->(1, 6, 384, 16, 44)
         pos = torch.cat((pos_n, pos_y, pos_x), dim=4).permute(0, 1, 4, 2, 3)
         return pos
 

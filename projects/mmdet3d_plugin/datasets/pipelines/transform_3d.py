@@ -362,6 +362,7 @@ class ResizeMultiview3D:
 @PIPELINES.register_module()
 class ResizeCropFlipImage(object):
     """Random resize, Crop and flip the image
+    变换图像的过程中，先用A矩阵恢复到原始图像，然后在计算lidar系下的坐标
     Args:
         size (tuple, optional): Fixed padding size.
     """
@@ -395,9 +396,11 @@ class ResizeCropFlipImage(object):
                 rotate=rotate,
             )
             new_imgs.append(np.array(img).astype(np.float32))
+            # 内参左乘A矩阵，图像变换时，先乘A矩阵恢复到原图，然后在乘内参恢复到cam系
             results['intrinsics'][i][:3, :3] = ida_mat @ results['intrinsics'][i][:3, :3]
 
         results["img"] = new_imgs
+        # 外参左乘内参-->lidar2img
         results['lidar2img'] = [results['intrinsics'][i] @ results['extrinsics'][i].T for i in range(len(results['extrinsics']))]
 
         return results
@@ -440,34 +443,35 @@ class ResizeCropFlipImage(object):
         return img, ida_mat
 
     def _sample_augmentation(self):
-        H, W = self.data_aug_conf["H"], self.data_aug_conf["W"]
-        fH, fW = self.data_aug_conf["final_dim"]
+        H, W = self.data_aug_conf["H"], self.data_aug_conf["W"] # 900, 1600
+        fH, fW = self.data_aug_conf["final_dim"] # (450, 800)
         if self.training:
-            resize = np.random.uniform(*self.data_aug_conf["resize_lim"])
-            resize_dims = (int(W * resize), int(H * resize))
-            newW, newH = resize_dims
-            crop_h = int((1 - np.random.uniform(*self.data_aug_conf["bot_pct_lim"])) * newH) - fH
-            crop_w = int(np.random.uniform(0, max(0, newW - fW)))
-            crop = (crop_w, crop_h, crop_w + fW, crop_h + fH)
+            resize = np.random.uniform(*self.data_aug_conf["resize_lim"]) # [0.47, 0.625] eg:0.6
+            resize_dims = (int(W * resize), int(H * resize)) # eg: (960, 540)
+            newW, newH = resize_dims # 960, 540
+            crop_h = int((1 - np.random.uniform(*self.data_aug_conf["bot_pct_lim"])) * newH) - fH # 540 - 450 = 90
+            crop_w = int(np.random.uniform(0, max(0, newW - fW))) # 960 - 800 = 160
+            crop = (crop_w, crop_h, crop_w + fW, crop_h + fH) # (160, 90, 960, 540)
             flip = False
             if self.data_aug_conf["rand_flip"] and np.random.choice([0, 1]):
-                flip = True
-            rotate = np.random.uniform(*self.data_aug_conf["rot_lim"])
+                flip = True # 0.5的概率翻转
+            rotate = np.random.uniform(*self.data_aug_conf["rot_lim"]) # 旋转(0, 0)
         else:
-            resize = max(fH / H, fW / W)
-            resize_dims = (int(W * resize), int(H * resize))
-            newW, newH = resize_dims
-            crop_h = int((1 - np.mean(self.data_aug_conf["bot_pct_lim"])) * newH) - fH
+            resize = max(fH / H, fW / W) # 取最大缩放比例 eg:0.5
+            resize_dims = (int(W * resize), int(H * resize)) # 缩放后图片的大小 eg:(800, 450)
+            newW, newH = resize_dims # 800, 450
+            crop_h = int((1 - np.mean(self.data_aug_conf["bot_pct_lim"])) * newH) - fH # 
             crop_w = int(max(0, newW - fW) / 2)
             crop = (crop_w, crop_h, crop_w + fW, crop_h + fH)
-            flip = False
-            rotate = 0
+            flip = False # 不翻转
+            rotate = 0 # 不旋转
         return resize, resize_dims, crop, flip, rotate
 
 
 @PIPELINES.register_module()
 class GlobalRotScaleTransImage(object):
     """Random resize, Crop and flip the image
+    效果: 在恢复3D点的过程中旋转缩放3D点云，同时GT也跟随变化
     Args:
         size (tuple, optional): Fixed padding size.
     """
@@ -481,12 +485,12 @@ class GlobalRotScaleTransImage(object):
         training=True,
     ):
 
-        self.rot_range = rot_range
-        self.scale_ratio_range = scale_ratio_range
-        self.translation_std = translation_std
+        self.rot_range = rot_range # [-0.3925, 0.3925]
+        self.scale_ratio_range = scale_ratio_range # [0.95, 1.05]
+        self.translation_std = translation_std # [0, 0, 0]
 
-        self.reverse_angle = reverse_angle
-        self.training = training
+        self.reverse_angle = reverse_angle # True
+        self.training = training # True
 
     def __call__(self, results):
         """Call function to pad images, masks, semantic segmentation maps.
@@ -496,19 +500,20 @@ class GlobalRotScaleTransImage(object):
             dict: Updated result dict.
         """
         # random rotate
-        rot_angle = np.random.uniform(*self.rot_range)
+        rot_angle = np.random.uniform(*self.rot_range) # eg:0.32465
 
-        self.rotate_bev_along_z(results, rot_angle)
+        self.rotate_bev_along_z(results, rot_angle) # 投影矩阵沿着z轴旋转
         if self.reverse_angle:
+            # 反向旋转角,因为box的rotate是右乘旋转矩阵，而position_embeding是左乘
             rot_angle *= -1
         results["gt_bboxes_3d"].rotate(
             np.array(rot_angle)
-        )  
+        ) # 旋转GT box
 
         # random scale
-        scale_ratio = np.random.uniform(*self.scale_ratio_range)
-        self.scale_xyz(results, scale_ratio)
-        results["gt_bboxes_3d"].scale(scale_ratio)
+        scale_ratio = np.random.uniform(*self.scale_ratio_range) # eg:0.9542
+        self.scale_xyz(results, scale_ratio) # 缩放投影矩阵
+        results["gt_bboxes_3d"].scale(scale_ratio) # 缩放gt前6维度和速度
 
         # TODO: support translation
 
@@ -517,12 +522,12 @@ class GlobalRotScaleTransImage(object):
     def rotate_bev_along_z(self, results, angle):
         rot_cos = torch.cos(torch.tensor(angle))
         rot_sin = torch.sin(torch.tensor(angle))
-
+        # 构造旋转矩阵(4x4)
         rot_mat = torch.tensor([[rot_cos, -rot_sin, 0, 0], [rot_sin, rot_cos, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
         rot_mat_inv = torch.inverse(rot_mat)
 
         num_view = len(results["lidar2img"])
-        for view in range(num_view):
+        for view in range(num_view): # lidar到camear到投影矩阵右乘旋转矩阵的逆-->新变换矩阵
             results["lidar2img"][view] = (torch.tensor(results["lidar2img"][view]).float() @ rot_mat_inv).numpy()
             # results["extrinsics"][view] = (torch.tensor(results["extrinsics"][view]).float() @ rot_mat_inv).numpy()
 
@@ -536,12 +541,12 @@ class GlobalRotScaleTransImage(object):
                 [0, 0, scale_ratio, 0],
                 [0, 0, 0, 1],
             ]
-        )
+        ) # 构造缩放矩阵
 
-        rot_mat_inv = torch.inverse(rot_mat)
+        rot_mat_inv = torch.inverse(rot_mat) # 求缩放矩阵的逆
 
         num_view = len(results["lidar2img"])
-        for view in range(num_view):
+        for view in range(num_view): # lidar到camear到投影矩阵右乘缩放矩阵-->新变换矩阵
             results["lidar2img"][view] = (torch.tensor(results["lidar2img"][view]).float() @ rot_mat_inv).numpy()
             # results["extrinsics"][view] = (torch.tensor(results["extrinsics"][view]).float() @ rot_mat_inv).numpy()
 

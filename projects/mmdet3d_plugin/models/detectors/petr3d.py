@@ -56,32 +56,32 @@ class Petr3D(MVXTwoStageDetector):
         if isinstance(img, list):
             img = torch.stack(img, dim=0)
 
-        B = img.size(0)
+        B = img.size(0) # 1
         if img is not None:
-            input_shape = img.shape[-2:]
+            input_shape = img.shape[-2:] # (512, 1408) 或 (320, 800)
             # update real input shape of each single img
             for img_meta in img_metas:
-                img_meta.update(input_shape=input_shape)
+                img_meta.update(input_shape=input_shape) # 增加实际输入字段
             if img.dim() == 5:
                 if img.size(0) == 1 and img.size(1) != 1:
                     img.squeeze_()
                 else:
-                    B, N, C, H, W = img.size()
-                    img = img.view(B * N, C, H, W)
+                    B, N, C, H, W = img.size() # (6, 3, 512, 1408)
+                    img = img.view(B * N, C, H, W) # (6, 3, 512, 1408)
             if self.use_grid_mask:
                 img = self.grid_mask(img)
-            img_feats = self.img_backbone(img)
+            img_feats = self.img_backbone(img) # (6, 2048, 16, 44) 或List[(12, 768, 20, 50)和(12, 1024, 10, 25)]
             if isinstance(img_feats, dict):
                 img_feats = list(img_feats.values())
         else:
             return None
         if self.with_img_neck:
-            img_feats = self.img_neck(img_feats)
+            img_feats = self.img_neck(img_feats) # (12, 256, 20, 50)和(12, 256, 10, 25)
         img_feats_reshaped = []
         for img_feat in img_feats:
-            BN, C, H, W = img_feat.size()
+            BN, C, H, W = img_feat.size() # 6, 2048, 16, 44
             img_feats_reshaped.append(img_feat.view(B, int(BN / B), C, H, W))
-        return img_feats_reshaped
+        return img_feats_reshaped # List[(1, 6, 2048, 16, 44)] 或 List[(1, 12, 256, 20, 50)和(1, 12, 256, 10, 25)]
 
     @auto_fp16(apply_to=('img'), out_fp32=True)
     def extract_feat(self, img, img_metas):
@@ -166,7 +166,7 @@ class Petr3D(MVXTwoStageDetector):
             dict: Losses of different branches.
         """
 
-        img_feats = self.extract_feat(img=img, img_metas=img_metas)
+        img_feats = self.extract_feat(img=img, img_metas=img_metas) # List[(1, 6, 2048, 16, 44)] 或 List[(1, 12, 256, 20, 50)和(1, 12, 256, 10, 25)]
 
         losses = dict()
         losses_pts = self.forward_pts_train(img_feats, gt_bboxes_3d,

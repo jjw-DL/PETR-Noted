@@ -371,15 +371,15 @@ class VoVNetCP(BaseModule):
 
     def forward(self, x):
         outputs = []
-        x = self.stem(x)
+        x = self.stem(x) # (12, 128, 80, 200)
         if "stem" in self._out_features:
             outputs.append(x)
         for name in self.stage_names:
-            x = getattr(self, name)(x)
+            x = getattr(self, name)(x) # (12, 512, 40, 100)-->(12, 768, 20, 50)-->(12, 1024, 10, 25)
             if name in self._out_features:
-                outputs.append(x)
+                outputs.append(x) # (12, 768, 20, 50)和(12, 1024, 10, 25)
 
-        return outputs
+        return outputs # List[(12, 768, 20, 50)和(12, 1024, 10, 25)]
 
     def _freeze_stages(self):
         if self.frozen_stages >= 0:

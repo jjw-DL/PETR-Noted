@@ -54,10 +54,10 @@ class PETRTransformer(BaseModule):
         if encoder is not None:
             self.encoder = build_transformer_layer_sequence(encoder)
         else:
-            self.encoder = None
+            self.encoder = None # None
         self.decoder = build_transformer_layer_sequence(decoder)
-        self.embed_dims = self.decoder.embed_dims
-        self.cross = cross
+        self.embed_dims = self.decoder.embed_dims # 256
+        self.cross = cross # False
 
     def init_weights(self):
         # follow the official DETR to init parameters
@@ -87,13 +87,17 @@ class PETRTransformer(BaseModule):
                 - memory: Output results from encoder, with shape \
                       [bs, embed_dims, h, w].
         """
-        bs, n, c, h, w = x.shape
+        bs, n, c, h, w = x.shape # (1, 6, 256, 16, 44)
+        # (1, 6, 256, 16, 44)-->(6, 16, 44, 1, 256)-->(4224, 1, 256)
         memory = x.permute(1, 3, 4, 0, 2).reshape(-1, bs, c) # [bs, n, c, h, w] -> [n*h*w, bs, c]
+        # (1, 6, 256, 16, 44)-->(6, 16, 44, 1, 256)-->(4224, 1, 256) 
+        # 作为key pose，在attention的过程中会和key向加
         pos_embed = pos_embed.permute(1, 3, 4, 0, 2).reshape(-1, bs, c) # [bs, n, c, h, w] -> [n*h*w, bs, c]
-        query_embed = query_embed.unsqueeze(1).repeat(
-            1, bs, 1)  # [num_query, dim] -> [num_query, bs, dim]
+        # (900, 256)-->(900, 1, 256)-->(900, 1, 256)
+        query_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)  # [num_query, dim] -> [num_query, bs, dim]
+        # (1, 6, 16, 44)-->(1, 4224)
         mask = mask.view(bs, -1)  # [bs, n, h, w] -> [bs, n*h*w]
-        target = torch.zeros_like(query_embed)
+        target = torch.zeros_like(query_embed) # (900, 1, 256) 全0初始化，但是query_embed会产生位置嵌入
 
         # out_dec: [num_layers, num_query, bs, dim]
         out_dec = self.decoder(
@@ -104,10 +108,11 @@ class PETRTransformer(BaseModule):
             query_pos=query_embed,
             key_padding_mask=mask,
             reg_branch=reg_branch,
-            )
-        out_dec = out_dec.transpose(1, 2)
+            ) # (6, 900, 1, 256)
+        out_dec = out_dec.transpose(1, 2) # (6, 1, 900, 256)
+        # (1, 6, 256, 16, 44)-->(6, 16, 44, 1, 256)-->(1, 6, 256, 16, 44)
         memory = memory.reshape(n, h, w, bs, c).permute(3, 0, 4, 1, 2)
-        return  out_dec, memory
+        return  out_dec, memory # (6, 1, 900, 256)和(1, 6, 256, 16, 44)
 
 
 @TRANSFORMER_LAYER.register_module()
@@ -144,17 +149,17 @@ class PETRTransformerDecoderLayer(BaseTransformerLayer):
                  **kwargs):
         super(PETRTransformerDecoderLayer, self).__init__(
             attn_cfgs=attn_cfgs,
-            feedforward_channels=feedforward_channels,
-            ffn_dropout=ffn_dropout,
-            operation_order=operation_order,
-            act_cfg=act_cfg,
-            norm_cfg=norm_cfg,
-            ffn_num_fcs=ffn_num_fcs,
+            feedforward_channels=feedforward_channels, # 2048
+            ffn_dropout=ffn_dropout, # 0.0
+            operation_order=operation_order, # ('self_attn', 'norm', 'cross_attn', 'norm', 'ffn', 'norm')
+            act_cfg=act_cfg, # ReLU
+            norm_cfg=norm_cfg, # LN
+            ffn_num_fcs=ffn_num_fcs, # 2
             **kwargs)
         assert len(operation_order) == 6
         assert set(operation_order) == set(
             ['self_attn', 'norm', 'cross_attn', 'ffn'])
-        self.use_checkpoint = with_cp
+        self.use_checkpoint = with_cp # True
     
     def _forward(self, 
                 query,
@@ -264,16 +269,16 @@ class PETRMultiheadAttention(BaseModule):
             attn_drop = kwargs['dropout']
             dropout_layer['drop_prob'] = kwargs.pop('dropout')
 
-        self.embed_dims = embed_dims
-        self.num_heads = num_heads
-        self.batch_first = batch_first
+        self.embed_dims = embed_dims # 256
+        self.num_heads = num_heads # 8
+        self.batch_first = batch_first # False
 
         self.attn = nn.MultiheadAttention(embed_dims, num_heads, attn_drop,
-                                          **kwargs)
+                                          **kwargs) # 调用nn.MultiheadAttention构造attn模块
 
-        self.proj_drop = nn.Dropout(proj_drop)
+        self.proj_drop = nn.Dropout(proj_drop) # 0
         self.dropout_layer = build_dropout(
-            dropout_layer) if dropout_layer else nn.Identity()
+            dropout_layer) if dropout_layer else nn.Identity() # (0.1)
 
     @deprecated_api_warning({'residual': 'identity'},
                             cls_name='MultiheadAttention')
@@ -339,9 +344,9 @@ class PETRMultiheadAttention(BaseModule):
                     warnings.warn(f'position encoding of key is'
                                   f'missing in {self.__class__.__name__}.')
         if query_pos is not None:
-            query = query + query_pos
+            query = query + query_pos # (900, 1, 256)
         if key_pos is not None:
-            key = key + key_pos
+            key = key + key_pos # (4224, 1, 256)
 
         # Because the dataflow('key', 'query', 'value') of
         # ``torch.nn.MultiheadAttention`` is (num_query, batch,
@@ -359,13 +364,12 @@ class PETRMultiheadAttention(BaseModule):
             key=key,
             value=value,
             attn_mask=attn_mask,
-            key_padding_mask=key_padding_mask)[0]
+            key_padding_mask=key_padding_mask)[0] # (900, 1, 256)
 
         if self.batch_first:
             out = out.transpose(0, 1)
 
         return identity + self.dropout_layer(self.proj_drop(out))
-
 
 
 @TRANSFORMER_LAYER_SEQUENCE.register_module()
@@ -414,10 +418,10 @@ class PETRTransformerDecoder(TransformerLayerSequence):
                  **kwargs):
 
         super(PETRTransformerDecoder, self).__init__(*args, **kwargs)
-        self.return_intermediate = return_intermediate
+        self.return_intermediate = return_intermediate # True
         if post_norm_cfg is not None:
             self.post_norm = build_norm_layer(post_norm_cfg,
-                                              self.embed_dims)[1]
+                                              self.embed_dims)[1] # LayerNorm 256
         else:
             self.post_norm = None
 
@@ -439,11 +443,12 @@ class PETRTransformerDecoder(TransformerLayerSequence):
 
         intermediate = []
         for layer in self.layers:
-            query = layer(query, *args, **kwargs)
+            # Detr3d需要投影抽取信息，因此在decoder中也要reg分支，优化位置，PETR不需要
+            query = layer(query, *args, **kwargs) # (900, 1, 256) query一直在变换，但是key和value不变
             if self.return_intermediate:
                 if self.post_norm is not None:
-                    intermediate.append(self.post_norm(query))
+                    intermediate.append(self.post_norm(query)) # 将每一层的query加入list
                 else:
                     intermediate.append(query)
-        return torch.stack(intermediate)
+        return torch.stack(intermediate) # (6, 900, 1, 256)
 

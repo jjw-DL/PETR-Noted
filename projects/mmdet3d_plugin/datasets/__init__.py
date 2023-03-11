@@ -8,8 +8,9 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 # ------------------------------------------------------------------------
 from .nuscenes_dataset import CustomNuScenesDataset
+from .internal_dataset_sweep import InternalDatasetSweep
 __all__ = [
-    'CustomNuScenesDataset'
+    'CustomNuScenesDataset', 'InternalDatasetSweep'
 ]
 
 
